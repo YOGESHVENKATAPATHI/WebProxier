@@ -1,4 +1,5 @@
-import { defineConfig, Plugin, ViteDevServer } from 'vite'
+import { defineConfig } from 'vite'
+import type { Plugin, ViteDevServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import type { IncomingMessage, ServerResponse } from 'http'
 
