@@ -3,14 +3,22 @@ import fetch from 'node-fetch';
 import * as cheerio from 'cheerio';
 
 export default async function handler(req, res) {
-  const { url } = req.query;
+  const { url, ...extraQuery } = req.query;
 
   if (!url) {
     return res.status(400).send('Usage: /api/proxy?url=https://website.com');
   }
 
   // Ensure URL starts with http/https
-  const targetUrl = url.startsWith('http') ? url : `https://${url}`;
+  const rawTarget = url.startsWith('http') ? url : `https://${url}`;
+  const parsedTarget = new URL(rawTarget);
+
+  // Preserve extra GET params from rewritten forms (e.g., ?q=searchterm)
+  Object.entries(extraQuery).forEach(([key, value]) => {
+    parsedTarget.searchParams.set(key, value as string);
+  });
+
+  const targetUrl = parsedTarget.toString();
 
   // Helper to safely resolve absolute URLs
   const getAbsoluteUrl = (relUrl) => {
@@ -53,6 +61,22 @@ export default async function handler(req, res) {
         if (href && !href.startsWith('javascript:')) {
             const absolute = getAbsoluteUrl(href);
             $(elem).attr('href', `/api/proxy?url=${encodeURIComponent(absolute)}`);
+        }
+    });
+
+    // Rewrite form actions so in-site search/forms keep proxied context
+    $('form').each((_, elem) => {
+        const action = $(elem).attr('action') || '';
+        if (action && action.startsWith('javascript:')) {
+            return;
+        }
+
+        const absoluteAction = action ? getAbsoluteUrl(action) : targetUrl;
+        $(elem).attr('action', `/api/proxy?url=${encodeURIComponent(absoluteAction)}`);
+
+        // Most search forms are GET; ensure query parameters are forwarded correctly.
+        if (!$(elem).attr('method') || $(elem).attr('method')?.toLowerCase() === 'get') {
+            $(elem).attr('method', 'get');
         }
     });
 
