@@ -5,13 +5,24 @@ import * as cheerio from 'cheerio';
 export default async function handler(req, res) {
   const { url, ...extraQuery } = req.query;
 
-  if (!url) {
+  if (!url || typeof url !== 'string' || !url.trim()) {
     return res.status(400).send('Usage: /api/proxy?url=https://website.com');
+  }
+
+  if (url.includes('/api/proxy')) {
+    // Prevent proxy recursion and overload loops
+    return res.status(400).send('Proxy recursion detected');
   }
 
   // Ensure URL starts with http/https
   const rawTarget = url.startsWith('http') ? url : `https://${url}`;
-  const parsedTarget = new URL(rawTarget);
+
+  let parsedTarget;
+  try {
+    parsedTarget = new URL(rawTarget);
+  } catch (err) {
+    return res.status(400).send('Invalid target URL');
+  }
 
   // Preserve extra GET params from rewritten forms (e.g., ?q=searchterm)
   Object.entries(extraQuery).forEach(([key, value]) => {
@@ -36,7 +47,20 @@ export default async function handler(req, res) {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
       }
     });
-    
+
+    if (!response.ok) {
+      return res.status(response.status).send(`Upstream error: ${response.status} ${response.statusText}`);
+    }
+
+    const MAX_HTML_BYTES = 6 * 1024 * 1024; // 6 MB
+    const contentLength = response.headers.get('content-length');
+    if (contentLength && Number(contentLength) > MAX_HTML_BYTES) {
+      // Avoid overloading server with massive files
+      res.setHeader('Content-Type', response.headers.get('content-type') || 'application/octet-stream');
+      const buffer = await response.arrayBuffer();
+      return res.send(Buffer.from(buffer));
+    }
+
     const contentType = response.headers.get('content-type');
     
     // Add generous CORS headers so the browser doesn't block resources
@@ -72,6 +96,10 @@ export default async function handler(req, res) {
         }
 
         const absoluteAction = action ? getAbsoluteUrl(action) : targetUrl;
+        if (!absoluteAction || absoluteAction.includes('/api/proxy')) {
+            return; // avoid proxy loops
+        }
+
         $(elem).attr('action', `/api/proxy?url=${encodeURIComponent(absoluteAction)}`);
 
         // Most search forms are GET; ensure query parameters are forwarded correctly.
